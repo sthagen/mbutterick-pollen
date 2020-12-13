@@ -49,7 +49,8 @@ Displays a list of available commands.
 
 Start the project server from the current directory using the default port, which is the value of the parameter @racket[current-server-port] (by default, port @id[default-project-server-port]).
 
-This command can be invoked with two optional arguments, and one optional switch.
+
+This command can be invoked with two optional arguments, and two optional switches.
 
 @racket[raco pollen start _path] will start the project server from @racket[_path] rather than the current directory (making @racket[_path] its root directory).
 
@@ -67,6 +68,10 @@ If you want to start in the current directory but with a different port, use @li
 @terminal{
 > raco pollen start . 8088}
 
+
+@margin-note{Pollen defaults to port @id[default-project-server-port] because it's not commonly used by other network services. But Pollen has no idea what else is running on your machine. If @id[default-project-server-port] is already in use, you'll get an error when you try to start the Pollen project server. In that case, try a different port.}
+
+
 Adding the optional @exec{-l} or @exec{--launch} switch will open the main project dashboard in your web browser after the project server starts.
 
 Adding the optional @exec{--local} switch will restrict the project server to responding to requests from localhost. (By default, the project server will respond to requests from any client.)
@@ -75,6 +80,14 @@ Adding the optional @exec{--local} switch will restrict the project server to re
 @section{@exec{raco pollen render}}
 
 This command can be invoked two ways: in source mode or directory mode.
+
+In both modes, the optional @exec{--dry-run} or @exec{-d} switch prints the paths that would be rendered by this command without actually doing so. 
+
+In both modes, the optional @exec{--force} or @exec{-f} switch forces a fresh render from source, even if the file is already cached, by updating the modification date of the file (à la @exec{touch}). Thus, if modification dates are important to you, don't use this option.
+
+In both modes, the optional @exec{--null} or @exec{-n} switch renders as usual, but doesn't write any files. (Convenient if you're arranging special render behavior, for instance writing to a database or network server.)
+
+
 
 @bold{Source mode}: @racket[raco pollen render _source ...] will render only the source paths specified in @racket[_source ...]. Consistent with the usual command-line idiom, this can be a single path, a list of paths, or a pattern:
 
@@ -115,9 +128,9 @@ As a rule of thumb, parallel rendering works best if you do @exec{raco setup} fi
 > raco pollen render -p 
 }
 
-
 @italic{Warning}: In all cases, the newly rendered output file will overwrite any previous output file.
 
+@margin-note{As of mid-2020, Pollen's parallel-processing performance under the CS (= Chez Scheme) variant of Racket is worse than ordinary Racket. If you use Racket CS, you may get better results using @exec{-j 4} (which will limit the operation to four cores) than @exec{-p} (which will use all available cores).}
 
 @bold{Directory mode}: @racket[raco pollen render _directory] renders all preprocessor source files and then all pagetree files found in the specified directory. If none of these files are found, a pagetree will be generated for the directory (which will include all source files) and then rendered. If the @racket[_directory] argument is omitted, the command defaults to the current directory.
 
@@ -148,6 +161,7 @@ You can determine the default publishing destination for a project by overriding
 
 Certain files and directories are automatically omitted from the published directory, including Racket and Pollen sources, Pollen caches, and source-control directories (like @tt{.git} and @tt{.svn}). You can omit other files by overriding @racket[default-omitted-path?]. You can override these omissions — that is, force a path to be published — by overriding @racket[default-extra-path?].
 
+The optional @exec{--dry-run} or @exec{-d} switch prints the source and destination directories for publishing without actually doing so. If the destination-directory path cannot be created, an error will arise.
 
 @section{@exec{raco pollen setup}}
 
@@ -166,6 +180,10 @@ The alternative @exec{--jobs <count>} or @exec{-j <count>} switch does the same 
 @terminal{
 > raco pollen setup -j 4
 }
+
+@margin-note{As of mid-2020, Pollen's parallel-processing performance under the CS (= Chez Scheme) variant of Racket is worse than ordinary Racket. If you use Racket CS, you may get better results using @exec{-j 4} (which will limit the operation to four cores) than @exec{-p} (which will use all available cores).}
+
+The optional @exec{--dry-run} or @exec{-d} switch prints the paths that would be compiled by this command without actually doing so.
 
 
 @section{@exec{raco pollen reset}}
@@ -202,4 +220,37 @@ Result is DEBUG
 
 }
 
+@section{Logging & the @exec{PLTSTDERR} environment variable}
+
+@margin-note{See @secref["logging" #:doc '(lib "scribblings/reference/reference.scrbl")] for an introduction to Racket's logging system.}
+
+By default, Pollen will log messages at the @racket['info] level or above to the console during any terminal session (e.g., project server or rendering job). So if you start the project server like so:
+
+@terminal{
+> raco pollen start
+} 
+
+You will see log messages starting with:
+
+@terminal{
+pollen: starting project server ...
+}
+
+And so forth.
+
+You can use Racket's @racket[PLTSTDERR] environment variable to adjust the level of logging. If you provide an explicit log level for Pollen, it will override this default behavior. So if you only want to see messages at the @racket['error] level or above, you would invoke the project server like so:
+
+@terminal|{
+> PLTSTDERR=error@pollen raco pollen start
+}|
+
+After this, the project server will work normally, but you won't see the usual @racket['info]-level messages, and instead will only see @racket['error] messages or above.
+
+Conversely, if you want more detailed logging, you can invoke the @racket['debug] log level like so:
+
+@terminal|{
+> PLTSTDERR=debug@pollen raco pollen start
+}|
+
+Then you'll see the usual @racket['info] messages, plus a bunch more.
 

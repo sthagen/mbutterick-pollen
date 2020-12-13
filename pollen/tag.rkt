@@ -53,7 +53,7 @@
   (make-keyword-procedure
    (λ (outer-kws outer-kw-args . ids)
      (define tag-proc (apply compose1 (for/list ([id (in-list ids)])
-                                               (make-one-tag-function outer-kws outer-kw-args id))))
+                                                (make-one-tag-function outer-kws outer-kw-args id))))
      (define tag-proc-name (string->symbol (format "pollen-tag:~a" (string-join (map symbol->string ids) "+"))))
      (procedure-rename tag-proc tag-proc-name))))
 
@@ -78,27 +78,33 @@
 (define-syntax (define-tag-function stx)
   (syntax-parse stx
     #:literals (λ)
-    [(_ (ID:id ARG:id ...) EXPR:expr ...)
-     #'(define-tag-function ID (λ (ARG ...) EXPR ...))]
+    [(THIS (ID:id ARG:id ...) EXPR:expr ...)
+     #'(THIS ID (λ (ARG ...) EXPR ...))]
     [(_ ID:id (λ (ATTRS:id ELEMS:id ARG:id ...) EXPR:expr ...))
      #:fail-when (> (length (syntax->list #'(ARG ...))) 0) "tag function must have exactly 2 positional arguments"
      #:fail-when (check-duplicate-identifier (list #'ATTRS #'ELEMS)) "duplicate variable name"
      #:fail-when (null? (syntax->list #'(EXPR ...))) "body of definition cannot be empty"
-     #'(define ID
+     ;; the srcloc of the `lambda` expression determines the srcloc of errors raised within its body
+     #`(define ID
          (make-keyword-procedure
-          (λ (kws kwargs . args)
-            (define tx-proc (keyword-apply default-tag-function kws kwargs (list 'ID)))
-            (define tx (apply tx-proc args))
-            (define-values (_ ATTRS ELEMS) (txexpr->values tx))
-            EXPR ...)))]))
+          #,(syntax/loc #'ID (lambda (kws kwargs . args)
+                               (let ([elems (match args
+                                              [(list* _ elems) elems]
+                                              [_ #false])])
+                                 (when elems
+                                   (unless (and (list? elems) (andmap txexpr-element? elems))
+                                     (raise-argument-error 'ID (format "elements need to be passed to tag function as individual trailing arguments (or, if you want to pass them as a single list, use `(apply ~a ···)` here instead of `(~a ···)`)" 'ID 'ID) (car elems)))))
+                               (define tx-proc (keyword-apply default-tag-function kws kwargs (list 'ID)))
+                               (define tx (apply tx-proc args))
+                               (define-values (_ ATTRS ELEMS) (txexpr->values tx))
+                               EXPR ...))))]))
 
 
 (module+ test
-  (require)
   (define foo2 (default-tag-function 'foo))
-  
   (define-tag-function (foo attrs elems)
     `(foo ,(reverse attrs) ,@elems))
+  (check-txexprs-equal? ◊(foo) ◊(foo2))
   (check-txexprs-equal? ◊foo[#:zim "zam"]{hello}  ◊foo2[#:zim "zam"]{hello})
   (check-txexprs-equal? ◊foo[#:ding "dong" '((zim "zam"))]{hello}  ◊foo2[#:ding "dong" '((zim "zam"))]{hello})
   (check-txexprs-equal? ◊foo['zim: "zam" #:ding "dong" ]{hello} ◊foo2['zim: "zam" #:ding "dong" ]{hello})

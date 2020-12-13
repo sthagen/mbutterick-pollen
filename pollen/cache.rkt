@@ -39,14 +39,14 @@
     (λ (path-or-path-string subkey caller-name)
       (define path
         (with-handlers ([exn:fail? (path-error-handler caller-name path-or-path-string)])
-          (path->complete-path (if (path? path-or-path-string)
+          (simple-form-path (if (path? path-or-path-string)
                                    path-or-path-string
                                    (string->path path-or-path-string)))))
       (unless (file-exists? path)
         (raise-argument-error caller-name "path to existing file" path-or-path-string))
       (cond
         [(setup:compile-cache-active path)
-         (define key (paths->key path))
+         (define key (paths->key 'source path))
          (define (convert-path-to-cache-record)
            (when (let ([crs (current-render-source)])
                    (and crs (not (equal? crs path))))
@@ -61,7 +61,7 @@
   (cached-require-base path-string subkey 'cached-require))
 
 (define+provide (cached-doc path-string)
-  (cached-require-base path-string (setup:main-export) 'cached-doc))
+  (cached-require-base path-string pollen-main-export 'cached-doc))
 
 (define+provide (cached-metas path-string)
-  (cached-require-base path-string (setup:meta-export) 'cached-metas))
+  (cached-require-base path-string pollen-meta-export 'cached-metas))

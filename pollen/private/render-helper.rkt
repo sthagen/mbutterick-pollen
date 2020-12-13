@@ -29,8 +29,8 @@
      (let ([source-path (syntax->datum #'SOURCE-PATH-STRING)])
        (with-syntax ([DIRECTORY-REQUIRE-FILES
                       (replace-context #'here (require-directory-require-files source-path))]
-                     [DOC-ID (setup:main-export source-path)]
-                     [METAS-ID (setup:meta-export source-path)]
+                     [DOC-ID pollen-main-export]
+                     [METAS-ID pollen-meta-export]
                      [COMMAND-CHAR (setup:command-char source-path)])
          #'(#%module-begin 
             DIRECTORY-REQUIRE-FILES
@@ -44,8 +44,10 @@
                   (define doc (cached-doc SOURCE-PATH-STRING))
                   (define metas (current-metas))
                   (define here (path->pagenode
-                                (or (select-from-metas (setup:here-path-key SOURCE-PATH-STRING) metas) 'unknown)))
+                                (or (select-from-metas pollen-here-path-key metas) 'unknown)))
                   (if (bytes? doc) ; if main export is binary, just pass it through
                       doc
-                      (include-template #:command-char COMMAND-CHAR (file TEMPLATE-PATH-STRING)))))
+                      ;; allows `require` in a template
+                      (splicing-let-syntax ([require (make-rename-transformer #'local-require)])
+                        (include-template #:command-char COMMAND-CHAR (file TEMPLATE-PATH-STRING))))))
               (provide result)))))]))

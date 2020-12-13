@@ -48,9 +48,9 @@
   (define pt-root-tag (setup:pagetree-root-node))
   (define (splice-nested-pagetree xs)
     (apply append (for/list ([x (in-list xs)])
-                    (if (and (txexpr? x) (eq? (get-tag x) pt-root-tag))
-                        (get-elements x)
-                        (list x)))))
+                            (if (and (txexpr? x) (eq? (get-tag x) pt-root-tag))
+                                (get-elements x)
+                                (list x)))))
   (validate-pagetree 
    (decode (cons pt-root-tag xs)
            #:txexpr-elements-proc (compose1 splice-nested-pagetree (λ (xs) (filter-not whitespace? xs))) 
@@ -63,7 +63,7 @@
          (define pagenodes (pagetree-strict->list x))
          (for ([p (in-list pagenodes)]
                #:unless (pagenode? p))
-           (raise-argument-error 'validate-pagetree "valid pagenodes" p))
+              (raise-argument-error 'validate-pagetree "valid pagenodes" p))
          (with-handlers ([exn:fail? (λ (e) (error 'validate-pagetree "~a" (exn-message e)))])
            (members-unique?/error pagenodes))
          x)))
@@ -117,12 +117,11 @@
 (define+provide load-pagetree get-pagetree) ; bw compat
 
 
-;; Try loading from pagetree file, or failing that, synthesize pagetree.
 (define+provide/contract (make-project-pagetree project-dir)
   (pathish? . -> . pagetree?)
-  (with-handlers ([exn:fail? (λ (exn) (directory->pagetree project-dir))])
-    (define pagetree-source (build-path project-dir (setup:main-pagetree)))
-    (load-pagetree pagetree-source)))
+  (match (build-path project-dir (setup:main-pagetree))
+    [(and (? file-exists?) pagetree-source) (load-pagetree pagetree-source)]
+    [_ (directory->pagetree project-dir)]))
 
 
 (define (topmost-node x) (first (->list x)))
@@ -138,7 +137,7 @@
            (if (memq pagenode (map topmost-node current-children))
                current-parent
                (for/or ([st (in-list (filter list? current-children))])
-                 (loop pagenode st))))))
+                       (loop pagenode st))))))
   (if (eq? result (first pt))
       (and allow-root? result)
       result))
@@ -160,7 +159,7 @@
          (match pagenode
            [(== (first pt) eq?) (map topmost-node (rest pt))]
            [_ (for/or ([subtree (in-list (filter pair? pt))])
-                (loop pagenode subtree))]))))
+                      (loop pagenode subtree))]))))
 
 
 (module-test-external
@@ -191,7 +190,7 @@
   (((or/c #f pagenodeish?)) ((or/c pagetree? pathish?)) . ->* . (or/c #f pagenodes?))  
   (match (for/list ([sib (in-list (or (siblings pnish pt-or-path) empty))]
                     #:unless (eq? sib (->pagenode pnish)))
-           sib)
+                   sib)
     [(? pair? sibs) sibs]
     [_ #false]))
 
@@ -216,7 +215,15 @@
 (define+provide/contract (pagetree->list pt-or-path)
   ((or/c pagetree? pathish?) . -> . pagenodes?)
   ; use rest to get rid of root tag at front
-  (pagetree-strict->list (get-pagetree pt-or-path))) 
+  (pagetree-strict->list (get-pagetree pt-or-path)))
+
+
+(define+provide/contract (pagetree->paths pt-or-path)
+  ((or/c pagetree? pathish?) . -> . (listof complete-path?))
+  (parameterize ([current-directory (current-project-root)])
+    (map ->complete-path (pagetree->list (match pt-or-path
+                                           [(? pagetree? pt) pt]
+                                           [_ (cached-doc pt-or-path)])))))
 
 
 (module-test-external
@@ -297,7 +304,17 @@
   (define starting-dir (match starting-path
                          [(? directory-exists?) starting-path]
                          [_ (dirname starting-path)]))
-  (->output-path (find-relative-path (->complete-path starting-dir) (->complete-path path))))
+  (define relpath (if (eq? starting-dir 'relative)
+                      path
+                      (find-relative-path (->complete-path starting-dir) (->complete-path path))))
+  (->output-path relpath))
+
+(module-test-external
+ (check-equal? (path->pagenode "/foo/bar/index.html" "/foo") 'foo/bar/index.html)
+ (check-equal? (path->pagenode "/foo/bar/index.html" "/foo/bar") 'bar/index.html)
+ (check-equal? (path->pagenode "/foo/bar/index.html" (string->path "/foo/bar")) 'bar/index.html)
+ (check-equal? (path->pagenode "/foo/bar/index.html" "/foo/bar/other.html") 'index.html)
+ (check-equal? (path->pagenode "assets" 'index.html) 'assets))
 
 
 (define+provide/contract (in-pagetree? pnish [pt-or-path (current-pagetree)])

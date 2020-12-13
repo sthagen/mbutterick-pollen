@@ -1,6 +1,9 @@
 #lang racket/base
 (require (for-syntax racket/base racket/syntax)
-         racket/runtime-path)
+         racket/runtime-path
+         racket/path
+         "private/constants.rkt")
+(provide (all-from-out "private/constants.rkt"))
 
 (define-syntax-rule (define+provide ID EXPR ...)
   (begin
@@ -16,10 +19,12 @@
   (let-values ([(dir name dir?) (split-path path)])
     dir))
 
-(define (get-path-to-override [file-or-dir (current-directory)])
-  (define starting-dir (if (directory-exists? file-or-dir)
-                           file-or-dir
-                           (dirname file-or-dir)))
+(define (get-path-to-override maybe-dir)
+  (define starting-dir (cond
+                         [(not maybe-dir) (current-directory)]
+                         [(directory-exists? maybe-dir) maybe-dir]
+                         [else (define dir (dirname maybe-dir))
+                               (and (not (eq? 'relative dir)) (simplify-path (path->complete-path dir (current-directory))))]))
   (let loop ([dir starting-dir][path default-directory-require])
     (and dir ; dir is #f when it hits the top of the filesystem
          (let ([simplified-path (simplify-path (path->complete-path path starting-dir))])
@@ -40,22 +45,23 @@
        #'(begin
            (provide (prefix-out setup: NAME-THUNKED) DEFAULT-NAME)
            (define DEFAULT-NAME DEFAULT-VALUE)
-           (define NAME-FAIL-THUNKED (λ _ DEFAULT-NAME))
            ;; can take a dir argument that sets start point for (get-path-to-override) search.
-           (define NAME-THUNKED (λ get-path-args
-                                  (with-handlers ([exn:fail? NAME-FAIL-THUNKED])
-                                    (dynamic-require `(submod ,(apply get-path-to-override get-path-args) WORLD-SUBMOD) 'NAME NAME-FAIL-THUNKED))))))]))
+           (define (NAME-THUNKED [dir #false])
+             ;; exn:fail:contract? is raised if setup submodule doesn't exist
+             ;; in which case we use the default value.
+             ;; but if something else is amiss, we want to let it bubble up
+             (define setup-module-path (get-path-to-override dir))
+             (with-handlers ([exn:fail:contract? (λ (exn) DEFAULT-NAME)]
+                             [exn? (λ (exn) (raise-user-error 'pollen/setup
+                                                              (format "defective `setup` submodule in ~v\n~a" (path->string setup-module-path) (exn-message exn))))])
+               (dynamic-require `(submod ,setup-module-path WORLD-SUBMOD)
+                                   'NAME
+                                   (λ () DEFAULT-NAME))))))]))
+
+
 
 (define-settable cache-watchlist null)
 (define-settable envvar-watchlist null)
-
-(define-settable preproc-source-ext 'pp)
-(define-settable markup-source-ext 'pm)
-(define-settable markdown-source-ext 'pmd)
-(define-settable null-source-ext 'p)
-(define-settable pagetree-source-ext 'ptree)
-(define-settable template-source-ext 'pt)
-(define-settable scribble-source-ext 'scrbl)
 
 ;; these are deliberately not settable because they're just internal signalers, no effect on external interface
 (define+provide default-mode-auto 'auto)
@@ -65,31 +71,19 @@
 (define+provide default-mode-pagetree 'ptree)
 (define+provide default-mode-template 'template)
 
-(define-settable old-cache-names '("pollen.cache" "pollen-cache"))
-(define-settable cache-dir-name "compiled")
-(define-settable cache-subdir-name "pollen")
-(define+provide default-cache-names (list* (cache-dir-name) (old-cache-names)))
+(define+provide default-cache-names (cons pollen-cache-dir-name pollen-old-cache-names))
 
-(define-settable decodable-extensions (list (markup-source-ext) (pagetree-source-ext)))
+(define-settable decodable-extensions (list pollen-markup-source-ext pollen-pagetree-source-ext))
 
-(define-settable main-pagetree (format "index.~a" (pagetree-source-ext)))
+(define-settable main-pagetree (format "index.~a" pollen-pagetree-source-ext))
 (define-settable pagetree-root-node 'pagetree-root)
 (define-settable main-root-node 'root)
 
 (define-settable command-char #\◊)
 (define-settable template-command-char #\∂)
 
-(define-settable template-prefix "template")
-(define-settable fallback-template-prefix "fallback")
-(define-settable template-meta-key "template")
-
-(define-settable main-export 'doc) ; don't forget to change fallback template too
-(define-settable meta-export 'metas)
-(define-settable meta-tag-name 'meta)
-(define-settable define-meta-name 'define-meta)
-
 ;; tags from https://developer.mozilla.org/en-US/docs/Web/HTML/Block-level_elements
-(define-settable block-tags (cons (main-root-node) '(address article aside blockquote body canvas dd div dl fieldset figcaption figure footer form  h1 h2 h3 h4 h5 h6 header hgroup hr li main nav noscript ol output p pre section table tfoot ul video)))
+(define-settable block-tags (cons (main-root-node) '(address article aside blockquote body canvas dd div dl dt fieldset figcaption figure footer form  h1 h2 h3 h4 h5 h6 header hgroup hr li main nav noscript ol output p pre section table tfoot ul video)))
 
 (define-settable newline "\n")
 (define-settable linebreak-separator (newline))
@@ -104,14 +98,17 @@
 
 (define+provide current-render-source (make-parameter #f))
 
+;; used to distinguish one-shot rendering (e.g., using `raco pollen setup` or `render`
+;; from an interactive session with the project server (using `raco pollen start`)
+;; in one-shot mode, certain features needed for dynamic recompilation are disabled for speed.
+(define+provide current-session-interactive? (make-parameter #false))
+
 (define-settable dashboard-css "poldash.css")
 
 (define-runtime-path server-extras-dir "private/server-extras")
 (define+provide current-server-extras-path (make-parameter server-extras-dir))
 
 (define-settable publish-directory "publish")
-
-(define-settable extension-escape-char #\_)
 
 (define-settable compile-cache-active #t)
 (define-settable render-cache-active #t)
@@ -125,11 +122,6 @@
 
 (define-settable trim-whitespace? #t)
 
-(define-settable here-path-key 'here-path)
-
-(define-settable splicing-tag '@)
-
-(define-settable poly-source-ext 'poly) ; extension that signals source can be used for multiple output targets
 (define-settable poly-targets '(html)) ; current target applied to multi-output source files
 (define+provide current-poly-target (make-parameter (car (poly-targets))))
 

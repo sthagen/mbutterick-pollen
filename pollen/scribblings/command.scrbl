@@ -21,6 +21,8 @@ Pollen uses a special character — the @italic{lozenge}, which looks like this:
 
 I chose the lozenge as the command character because a) it appears in almost every font, b) it's barely used in ordinary typesetting, c) it's not used in any programming language that I know of, and d) its shape and color allow it to stand out easily in code without being distracting. 
 
+Consideration (b) is especially important in a text-based language like Pollen. If Pollen used something more common as its command character, then every time you used that character in text, you'd have to specially escape it. This would make it cumbersome and annoying to import plain text into Pollen source files. This is the Pareto-optimal trade.
+
 If you're using DrRacket, you can use the @onscreen{Insert Command Char} button at the top of the editing window to — you guessed it — insert the command character.
 
 If you're using a different editor, here's how you type it:
@@ -29,9 +31,9 @@ If you're using a different editor, here's how you type it:
 @(linebreak)@bold{Windows}: holding down Alt, type 9674 on the num pad
 @(linebreak)@bold{GNU/Linux, BSD}: Type Ctrl + Shift + U, then 25CA, then Enter
 
-For more information on entering arbitrary Unicode glyphs, see @link["https://en.wikipedia.org/wiki/Unicode_input"]{Wikipedia}.
+For more information on entering arbitrary Unicode characters, see @link["https://en.wikipedia.org/wiki/Unicode_input"]{Wikipedia}.
 
-@subsection{``But I don't want to use it ...''}
+@subsection{``But I don't want to use the lozenge ...''}
 
 Fine, but you have to pick @italic{something} as your command character. If you don't like this one, you can override it within a project — see @seclink["setup-overrides"].
 
@@ -612,7 +614,7 @@ Second, the metas are collected into a hash table that is exported with the name
 '#hasheq((dog . "Roxy") (cat . "Chopper") (here-path . "unsaved-editor"))
 }
 
-The only key that's automatically defined in every meta table is @racket['#,(setup:here-path-key)], which is the absolute path to the source file. (In this case, because the file hasn't been saved, you'll see the @val{unsaved-editor} name instead.) 
+The only key that's automatically defined in every meta table is @racket['#,pollen-here-path-key], which is the absolute path to the source file. (In this case, because the file hasn't been saved, you'll see the @val{unsaved-editor} name instead.) 
 
 Still, you can override this too:
 
@@ -659,6 +661,32 @@ The title is ◊(select-from-metas 'title metas)
 }|
 
 @repl-output{'(root "The title is " "Conclusion to " (em "Infinity War"))}
+
+
+To save a few keystrokes, you can consolidate multiple key–value pairs into one @racket[define-meta] form. So this:
+
+@codeblock{
+#lang pollen
+◊(define-meta dog "Roxy")
+◊(define-meta cat "Chopper")
+◊(define-meta ape "Koko") 
+}
+
+Is the same as this:
+
+@codeblock{
+#lang pollen
+◊(define-meta dog "Roxy"
+              cat "Chopper"
+              ape "Koko")
+}
+
+In both cases, the resulting metas look like this:
+
+@terminal{
+> metas
+'#hasheq((ape . "Koko") (cat . "Chopper") (dog . "Roxy") (here-path . "unsaved editor"))
+}
 
 
 @subsubsection{Retrieving metas}

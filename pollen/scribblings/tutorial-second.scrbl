@@ -226,15 +226,22 @@ I am **so** happy to be writing this.
 
 Before you preview this file in the project server, click the @onscreen{Run} button in DrRacket just to see what the file produces. You'll see something like this:
 
-@repl-output{'(root (h1 ((id "deep-thought")) "Deep Thought") 
-(p "I am " (strong "so") " happy to be writing this."))}
+@repl-output{
+'(root
+  (h1 ((id "deep-thought")) "Deep Thought")
+  (p "I am " (strong "so") " happy to be writing this."))
+}
 
 You should now be able to recognize this as an X-expression. In authoring mode, Pollen compiles your Markdown into the corresponding HTML entities, but then provides the data as an X-expression rather than finished HTML.
 
 From what you learned in the last section, it should be evident that this X-expression will convert to HTML that looks like this:
 
-@terminal{<root><h1 id="deep-thought">Deep Thought</h1>
-<p>I am <strong>so</strong> happy to be writing this.</p></root>}
+@terminal{
+<root>
+  <h1 id="deep-thought">Deep Thought</h1>
+  <p>I am <strong>so</strong> happy to be writing this.</p>
+</root>
+}
 
 ``But what's this @code{root} tag? That's not HTML.'' An X-expression that holds other X-expressions must have a root tag. So in the spirit of obviousness, every X-expression produced by Pollen in authoring mode will start with @code{root}. If you don't need it, you can discard it (we'll cover this below, in  @secref[#:tag-prefixes '("tutorial-2")]{Templates}). Though as you'll learn in the @seclink["third-tutorial"]{third tutorial}, @code{root} also creates a useful hook for further processing — it's not a superfluous accessory.
 
@@ -291,7 +298,7 @@ And two major differences:
 
 
 
-@margin-note{``So a template is also a Pollen source file?'' Not quite. More accurately, it's a fragment of Pollen source that is completed by adding the X-expression that comes out of one of your source files. Because of this, there are a few extra limitations on the code you can put in a template, though with easy workarounds (for instance, you can't use @racket[require] in a template, but you can use @racket[local-require], which accomplishes the same thing).}
+@margin-note{``So a template is also a Pollen source file?'' Not quite. More accurately, it's a fragment of Pollen source that is completed by adding the X-expression that comes out of one of your source files. Because of this, there are a few extra limitations on the code you can put in a template, though with easy workarounds.}
 
 
 To see how this works, let's return to the source file we started in the last section:
@@ -363,9 +370,6 @@ Finally, we need to include the X-expression from our source file. By convention
 #lang pollen
 ◊(->html (html (head (meta #:charset "UTF-8")) (body doc)))
 }
-
-
-@margin-note{You can change the name of @code{doc} by overriding @racket[default-main-export].}
 
 To summarize: this template contains a skeletal HTML page (in X-expression format). We drop @code{doc} into the template to indicate where the X-expression of our source file should be inserted. Finally, we convert the whole X-expression to HTML with @racket[->html].
 

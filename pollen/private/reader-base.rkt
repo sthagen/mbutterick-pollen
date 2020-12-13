@@ -4,7 +4,6 @@
          racket/class
          racket/string
          racket/runtime-path
-         racket/match
          setup/getinfo
          sugar/file
          (for-syntax racket/base)
@@ -19,14 +18,15 @@
   ((if (syntax? source-name) syntax-source values) source-name))
 
 (define (infer-parser-mode reader-mode reader-here-path)
-  (match reader-mode
-    [(== default-mode-auto)
-     (match (cond [(get-ext reader-here-path) => string->symbol])
-       [(== (setup:pagetree-source-ext)) default-mode-pagetree]
-       [(== (setup:markup-source-ext)) default-mode-markup]
-       [(== (setup:markdown-source-ext)) default-mode-markdown]
-       [_ default-mode-preproc])]
-    [_ reader-mode]))
+  (cond
+    [(eq? reader-mode default-mode-auto)
+     (let ([val (cond [(get-ext reader-here-path) => string->symbol])])
+       (cond
+         [(eq? val pollen-pagetree-source-ext) default-mode-pagetree]
+         [(eq? val pollen-markup-source-ext) default-mode-markup]
+         [(eq? val pollen-markdown-source-ext) default-mode-markdown]
+         [else default-mode-preproc]))]
+    [else reader-mode]))
 
 (define (custom-read p) (syntax->datum (custom-read-syntax (object-name p) p)))
 
@@ -46,11 +46,11 @@
                   ;; an inline Pollen submodule doesn't have "pollen.rkt" or `here-path` 
                   [POLLEN-REQUIRE-AND-PROVIDES (require+provide-directory-require-files pollen-require-path)]
                   [HERE-PATH reader-here-path]
-                  [HERE-KEY (setup:here-path-key)]
+                  [HERE-KEY pollen-here-path-key]
                   [SOURCE-LINES source-stx]
-                  [DOC (setup:main-export)]
-                  [META-MOD (setup:meta-export)]
-                  [METAS-ID (setup:meta-export)]
+                  [DOC pollen-main-export]
+                  [META-MOD pollen-meta-export]
+                  [METAS-ID pollen-meta-export]
                   [PARSER-MODE-FROM-READER parser-mode-from-reader])
      #'(module runtime-wrapper racket/base
          (module configure-runtime racket/base
@@ -88,12 +88,16 @@
          (hash-ref! command-char-cache maybe-source-path (λ () (setup:command-char maybe-source-path))))
        (case key
          [(color-lexer)
-          (match (dynamic-require 'syntax-color/scribble-lexer 'make-scribble-inside-lexer (λ () #false))
-            [(? procedure? make-lexer) (make-lexer #:command-char my-command-char)]
-            [_ default])]
+          (define maybe-lexer
+            (dynamic-require 'syntax-color/scribble-lexer 'make-scribble-inside-lexer (λ () #false)))
+          (cond
+            [(procedure? maybe-lexer) (maybe-lexer #:command-char my-command-char)]
+            [else default])]
          [(drracket:toolbar-buttons)
-          (match (dynamic-require 'pollen/private/drracket-buttons 'make-drracket-buttons (λ () #false))
-            [(? procedure? make-buttons) (make-buttons my-command-char)])])]
+          (define maybe-button-maker
+            (dynamic-require 'pollen/private/drracket-buttons 'make-drracket-buttons (λ () #false)))
+          (when (procedure? maybe-button-maker)
+            (maybe-button-maker my-command-char))])]
       [(drracket:indentation)
        (λ (text pos)
          (define line-idx (send text position-line pos))
@@ -103,28 +107,29 @@
            (or
             (for/first ([pos (in-range line-start-pos line-end-pos)]
                         #:unless (char-blank? (send text get-character pos)))
-                       pos)
+              pos)
             line-start-pos))
          (- first-vis-pos line-start-pos))]
       [(drracket:default-filters)
        ;; derive this from `module-suffixes` entry in main info.rkt file
        (define module-suffixes ((get-info/full info-dir) 'module-suffixes))
        (define filter-strings (for/list ([suffix (in-list module-suffixes)])
-                                        (format "*.~a" suffix)))
+                                (format "*.~a" suffix)))
        (list (list "Pollen sources" (string-join filter-strings ";")))]
       [(drracket:default-extension)
        (symbol->string
-        (match mode
-          [(== default-mode-auto) (setup:preproc-source-ext)]
-          [(== default-mode-preproc) (setup:preproc-source-ext)]
-          [(== default-mode-markdown) (setup:markdown-source-ext)]
-          [(== default-mode-markup) (setup:markup-source-ext)]
-          [(== default-mode-pagetree) (setup:pagetree-source-ext)]))]
+        (cond
+          [(eq? mode default-mode-auto) pollen-preproc-source-ext]
+          [(eq? mode default-mode-preproc) pollen-preproc-source-ext]
+          [(eq? mode default-mode-markdown) pollen-markdown-source-ext]
+          [(eq? mode default-mode-markup) pollen-markup-source-ext]
+          [(eq? mode default-mode-pagetree) pollen-pagetree-source-ext]))]
       [else default])))
 
 (define-syntax-rule (reader-module-begin mode . _)
   (#%module-begin
    (define cgi (custom-get-info mode)) ; stash hygienic references to local funcs with macro-introduced identifiers
    (define cr custom-read) ; so they can be provided out
-   (define (crs ps p) (custom-read-syntax #:reader-mode mode ps p))
+   ;; allow six-argument arity to be compatible with `debug`
+   (define (crs ps p . _) (custom-read-syntax #:reader-mode mode ps p))
    (provide (rename-out [cr read][crs read-syntax][cgi get-info]))))

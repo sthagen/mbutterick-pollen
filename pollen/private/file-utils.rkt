@@ -1,6 +1,6 @@
 #lang racket/base
 (require (for-syntax racket/base racket/syntax))
-(require racket/path)
+(require racket/path racket/match)
 (require "../setup.rkt" sugar/define sugar/file sugar/coerce sugar/test)
 
 
@@ -19,10 +19,9 @@
   (parameterize ([current-directory (dirname (->complete-path starting-path))])
     (let loop ([dir (current-directory)][path filename-to-find])
       (and dir ; dir is #f when it hits the top of the filesystem
-           (let ([completed-path (path->complete-path path)]) 
-             (if (exists-proc completed-path)
-                 (simplify-path completed-path)
-                 (loop (dirname dir) (build-path 'up path))))))))
+           (match (simple-form-path path)
+             [(? exists-proc sfp) sfp]
+             [_ (loop (dirname dir) (build-path 'up path))])))))
 
 
 ;; for files like svg that are not source in pollen terms,
@@ -57,7 +56,7 @@
   (not (regexp-match #rx"^\\." (path->string path))))
 
 
-(define+provide (escape-last-ext x [escape-char (setup:extension-escape-char)])
+(define+provide (escape-last-ext x [escape-char pollen-extension-escape-char])
   ;((pathish?) (char?) . ->* . coerce/path?)
   ;; if x has a file extension, reattach it with the escape char
   (define current-ext (get-ext x))
@@ -76,7 +75,7 @@
 (define second cadr)
 (define third caddr)
 (define (last x) (car (reverse x)))
-(define+provide (unescape-ext x [escape-char (setup:extension-escape-char)])
+(define+provide (unescape-ext x [escape-char pollen-extension-escape-char])
   ;((coerce/string?) (char?) . ->* . coerce/path?)
   ;; if x has an escaped extension, unescape it.
   (define-values (base _ dir?) (split-path x))
@@ -128,7 +127,7 @@
 
 
 (define+provide (has-poly-ext? x)
-  (equal? (get-ext x) (->string (setup:poly-source-ext))))
+  (equal? (get-ext x) (->string pollen-poly-source-ext)))
 
 (module-test-external
  (check-true (has-poly-ext? "foo.poly"))
@@ -147,7 +146,7 @@
 (define-syntax (define-utility-functions stx)
   (syntax-case stx ()
     [(_ STEM)
-     (with-syntax ([SETUP:STEM-SOURCE-EXT (format-id stx "setup:~a-source-ext" #'STEM)]
+     (with-syntax ([STEM-SOURCE-EXT (format-id stx "pollen-~a-source-ext" #'STEM)]
                    [STEM-SOURCE? (format-id stx "~a-source?" #'STEM)]
                    [GET-STEM-SOURCE (format-id stx "get-~a-source" #'STEM)]
                    [HAS/IS-STEM-SOURCE? (format-id stx "has/is-~a-source?" #'STEM)]
@@ -158,7 +157,7 @@
            ;; does file have particular extension
            (define+provide (STEM-SOURCE? x)
              #;(any/c . -> . boolean?)
-             (and (pathish? x) (has-ext? (->path x) (SETUP:STEM-SOURCE-EXT)) #true))
+             (and (pathish? x) (has-ext? (->path x) STEM-SOURCE-EXT) #true))
            
            ;; non-theoretical: want the first possible source that exists in the filesystem
            (define+provide (GET-STEM-SOURCE x)
@@ -185,19 +184,19 @@
                    (list x) ; already has the source extension
                    #,(if (eq? (syntax->datum #'STEM) 'scribble)
                          #'(if (x . has-ext? . 'html) ; different logic for scribble sources
-                               (list (add-ext (remove-ext* x) (SETUP:STEM-SOURCE-EXT)))
+                               (list (add-ext (remove-ext* x) STEM-SOURCE-EXT))
                                #false)
                          #'(let ([x-ext (get-ext x)]
-                                 [source-ext (SETUP:STEM-SOURCE-EXT)])
+                                 [source-ext STEM-SOURCE-EXT])
                              (cons
                               (add-ext x source-ext) ; standard
                               (if x-ext ; has existing ext, therefore needs escaped version
                                   (cons
                                    (add-ext (escape-last-ext x) source-ext)
                                    (if (ext-in-poly-targets? x-ext x) ; needs multi + escaped multi
-                                       (let ([x-multi (add-ext (remove-ext x) (setup:poly-source-ext))])
+                                       (let ([x-multi (add-ext (remove-ext x) pollen-poly-source-ext)])
                                          (list
-                                          (add-ext x-multi (SETUP:STEM-SOURCE-EXT))
+                                          (add-ext x-multi STEM-SOURCE-EXT)
                                           (add-ext (escape-last-ext x-multi) source-ext)))
                                        null))
                                   null))))))
@@ -221,21 +220,15 @@
 (define+provide (->source+output-paths source-or-output-path)
   ;(complete-path? . -> . (values complete-path? complete-path?))
   ;; file-proc returns two values, but ormap only wants one
-  (define tests (list
-                 has/is-null-source?
-                 has/is-preproc-source?
-                 has/is-markup-source?
-                 has/is-scribble-source?
-                 has/is-markdown-source?))
-  (define file-procs (list ->null-source+output-paths
-                           ->preproc-source+output-paths
-                           ->markup-source+output-paths
-                           ->scribble-source+output-paths
-                           ->markdown-source+output-paths))  
-  (define file-proc (for/first ([test (in-list tests)]
-                                [file-proc (in-list file-procs)]
-                                #:when (test source-or-output-path))
-                               file-proc))
+  (define file-proc
+    (match source-or-output-path
+      ;; resolve these in alphabetical order, because project server gives priority to alphabetic order
+      [(? has/is-null-source?) ->null-source+output-paths] ; .p
+      [(? has/is-markup-source?) ->markup-source+output-paths] ; .pm
+      [(? has/is-markdown-source?) ->markdown-source+output-paths] ; .pmd
+      [(? has/is-preproc-source?) ->preproc-source+output-paths] ; .pp
+      [(? has/is-scribble-source?) ->scribble-source+output-paths] ; . scrbl
+      [_ (λ (x) (values #false #false))]))
   (file-proc source-or-output-path))
 
 
@@ -299,7 +292,7 @@
   (and (regexp-match pat str) #t))
 
 
-(define (special-path? path)
+(define+provide (special-path? path)
   (define special-paths (append default-cache-names '("compiled" ".git" ".gitignore" ".hg" ".svn" "CVS" "Makefile")))
   (and (member (path->string (last (explode-path path))) special-paths) #t))
 

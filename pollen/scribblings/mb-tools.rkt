@@ -1,9 +1,20 @@
 #lang at-exp racket/base
-(require (for-syntax racket/base racket/syntax pollen/setup) scribble/core scribble/manual scribble/private/manual-sprop scribble/decode scribble/html-properties racket/runtime-path racket/format  pollen/setup)
+(require (for-syntax racket/base
+                     racket/syntax)
+         racket/format
+         racket/runtime-path
+         scribble/core
+         scribble/decode
+         scribble/html-properties
+         scribble/latex-properties
+         scribble/manual
+         scribble/private/manual-sprop)
+
 
 (provide (all-defined-out) (all-from-out racket/runtime-path))
 
 (define-runtime-path mb-css "mb.css")
+(define-runtime-path mb-tex "mb.tex")
 
 (define (link-tt url) (link url (tt url)))
 
@@ -13,17 +24,18 @@
 (define (fileblock filename . inside)
   (compound-paragraph 
    (style "fileblock" (list* (alt-tag "div") 'multicommand
-                             (box-mode "RfileboxBoxT" "RfileboxBoxC" "RfileboxBoxB") 
+                             (box-mode "RfileboxBoxT" "RfileboxBoxC" "RfileboxBoxB")
+                             (tex-addition mb-tex)
                              scheme-properties))
    (list
-    (paragraph (style "fileblock_filetitle" (list* (alt-tag "div") (box-mode* "RfiletitleBox") scheme-properties))
+    (paragraph (style "fileblockFiletitle" (list* (alt-tag "div") (box-mode* "RfiletitleBox") (tex-addition mb-tex) scheme-properties))
                (list (make-element
-                      (style "fileblock_filename" (list (css-style-addition mb-css)))
+                      (style "fileblockFilename" (list (css-style-addition mb-css) (tex-addition mb-tex)))
                       (if (string? filename)
                           (filepath filename)
                           filename))))
     (compound-paragraph 
-     (style "fileblock_filecontent" (list* (alt-tag "div") (box-mode* "RfilecontentBox") scheme-properties))
+     (style "fileblockFilecontent" (list* (alt-tag "div") (box-mode* "RfilecontentBox") (tex-addition mb-tex) scheme-properties))
      (decode-flow inside)))))
 
 (define (convert-newlines args)
@@ -36,17 +48,28 @@
   (nested (racketerror (racketfont* (convert-newlines args)))))
 
 (define (foreign-code . args)
-  (compound-paragraph (style "foreign-code" (list (css-style-addition mb-css) (alt-tag "div"))) (list (apply verbatim args))))
+  (compound-paragraph (style "foreignCode" (list (css-style-addition mb-css)
+                                                 (alt-tag "div")
+                                                 (tex-addition mb-tex)))
+                      (list (apply verbatim args))))
 
 (define (terminal . args)
-  (compound-paragraph (style "terminal" (list (css-style-addition mb-css) (alt-tag "div"))) (list (apply verbatim args))))
+  (compound-paragraph (style "terminal" (list (css-style-addition mb-css)
+                                              (alt-tag "div")
+                                              (tex-addition mb-tex)))
+                      (list (apply verbatim args))))
 
 (define (browser . args)
-  (compound-paragraph (style "browser" (list (css-style-addition mb-css) (alt-tag "div"))) (list (paragraph (style #f null) (convert-newlines args)))))
+  (compound-paragraph (style "browser" (list (css-style-addition mb-css)
+                                             (alt-tag "div")
+                                             (tex-addition mb-tex)))
+                      (list (paragraph (style #f null) (convert-newlines args)))))
 
 
 (define (noskip-note)
-  (nested #:style (style "noskip" (list (css-style-addition mb-css) (alt-tag "div")))
+  (nested #:style (style "noskip" (list (css-style-addition mb-css)
+                                        (alt-tag "div")
+                                        (tex-addition mb-tex)))
           (margin-note "Don’t skip this section! It explains an essential Pollen concept.")))
 
 
@@ -58,20 +81,6 @@
            (define-runtime-path id name)
            (image id xs ...)))]))
 
-(define-syntax (defoverridable stx)
-  (syntax-case stx ()
-    [(_ name predicate? desc ...)
-     (with-syntax* ([default-name (format-id #'here "default-~a" #'name)]
-                   [value (let ([v (syntax-local-eval #'default-name)])
-                            (cond
-                              [(and (list? v) (andmap symbol? v) (> (length v) 5)) #`'#,'(see below)]
-                              [(or (symbol? v) (list? v)) #`'#,v]
-                              [(procedure? v) '(λ (path) #f)]
-                              [else v]))]
-                   [setup:name (format-id stx "setup:~a" #'name)])
-       #`(deftogether ((defproc (setup:name) predicate?)
-                       (defthing default-name predicate? #:value value))
-           desc ...))]))
 
 (define (val . args)
   (racketvalfont (element 'tt (map ~v args))))

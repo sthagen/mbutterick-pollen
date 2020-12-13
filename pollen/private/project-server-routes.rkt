@@ -58,15 +58,16 @@
 ;; print message to console about a request
 (define/contract (logger req)
   (request? . -> . void?) 
-  (define localhost-client "::1")
+  (define localhost-names '("::1" "fe80::1%lo0" "127.0.0.1"))
   (define url-string (url->string (request-uri req)))
   (unless (ends-with? url-string "favicon.ico")
     (message (match url-string
                [(regexp #rx"/$") (string-append url-string " directory default page")]
                [_ (string-replace url-string (setup:main-pagetree) " dashboard")])
              (match (request-client-ip req)
-               [(== localhost-client) ""]
-               [client (format "from ~a" client)]))))
+               [client #:when (not (member client localhost-names))
+                       (format "from ~a" client)]
+               [_ ""]))))
 
 ;; pass string args to route, then
 ;; package route into right format for web server
@@ -176,7 +177,7 @@
                                  null)))
     (define dirlinks (cons "/" (map (λ (ps) (format "/~a/" (apply build-path ps)))  
                                     (for/list ([i (in-range (length (cdr dirs)))])
-                                              (take (cdr dirs) (add1 i))))))
+                                      (take (cdr dirs) (add1 i))))))
     `(row (heading ((colspan "3")) ,@(add-between (map (λ (dir dirlink) `(a ((href ,(format "~a~a" dirlink (setup:main-pagetree)))) ,(->string dir))) dirs dirlinks) "/"))))
   
   (define (make-path-row filename source indent-level)
@@ -192,7 +193,7 @@
                                               (define source-minus-ext (unescape-ext (remove-ext source)))
                                               (define source-second-ext (get-ext source-minus-ext))
                                               (cond ; multi source. expand to multiple output files.
-                                                [(and source-second-ext (equal? source-second-ext (->string (setup:poly-source-ext (->complete-path source)))))
+                                                [(and source-second-ext (equal? source-second-ext (->string pollen-poly-source-ext)))
                                                  (define source-base (remove-ext source-minus-ext))
                                                  (define output-names (map (λ (ext) (->string (add-ext source-base ext))) (setup:poly-targets (->complete-path source))))
                                                  (cons #f `(div ,@(map (λ (on) `(a ((href ,on)) ,on (span ((class "file-ext")) "." ,source-first-ext ,(format " (from ~a)" (->string (find-relative-path dashboard-dir source)))))) output-names)))]
@@ -301,15 +302,21 @@
                    [possible-idx-path (in-value (build-path index-dir possible-idx-page))]
                    [_ (in-value (render-from-source-or-output-path possible-idx-path))]
                    #:when (file-exists? possible-idx-path))
-                  (redirect-to (path->string (find-relative-path index-dir possible-idx-path)) temporarily))
+        (redirect-to (path->string (find-relative-path index-dir possible-idx-path)) temporarily))
       (route-404 req)))
 
 ;; 404 route
 (define/contract (route-404 req)
   (request? . -> . response?)
+  (define missing-url (url->string (request-uri req)))
   (define missing-path-string (path->string (simplify-path (req->path req))))
-  (message (format "can't find ~a" missing-path-string))
+  (message (format "can't find ~a" missing-url))
   (response/xexpr+doctype
    `(html 
      (head (title "404 error") (link ((href "/error.css") (rel "stylesheet"))))
-     (body (div ((class "section")) (div ((class "title")) "404 error") (p ,(format "~v" missing-path-string) " was not found"))))))
+     (body (div ((class "section"))
+                (div ((class "title")) "404 error")
+                (p ,(format "URL ~v was not found at path ~v" missing-url
+                            (match missing-path-string
+                              [(regexp #rx"/$") (string-append missing-path-string "index.html")]
+                              [mps mps]))))))))

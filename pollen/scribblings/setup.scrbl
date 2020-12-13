@@ -5,6 +5,22 @@
 @(define my-eval (make-base-eval))
 @(my-eval `(require pollen pollen/setup))
 
+@(require (for-syntax racket/base racket/syntax pollen/setup))
+@(define-syntax (defoverridable stx)
+  (syntax-case stx ()
+    [(_ name predicate? desc ...)
+     (with-syntax* ([default-name (format-id #'here "default-~a" #'name)]
+                   [value (let ([v (syntax-local-eval #'default-name)])
+                            (cond
+                              [(and (list? v) (andmap symbol? v) (> (length v) 5)) #`'#,'(see below)]
+                              [(or (symbol? v) (list? v)) #`'#,v]
+                              [(procedure? v) '(λ (path) #f)]
+                              [else v]))]
+                   [setup:name (format-id stx "setup:~a" #'name)])
+       #`(deftogether ((defproc (setup:name) predicate?)
+                       (defthing default-name predicate? #:value value))
+           desc ...))]))
+
 @title{Setup}
 
 @defmodule[pollen/setup]
@@ -55,23 +71,6 @@ Every @racket[setup:]@racket[_name] function will resolve the current value of t
 Determines the default HTTP port for the project server.}
 
 
-@defoverridable[main-export symbol?]{The main X-expression exported from a compiled Pollen source file.}
-
-@defoverridable[meta-export symbol?]{The meta hashtable exported from a compiled Pollen source file.}
-
-@defoverridable[extension-escape-char char?]{Character for escaping output-file extensions within source-file names.}
-
-
-@deftogether[(
-@defoverridable[preproc-source-ext symbol?]
-@defoverridable[markup-source-ext symbol?]
-@defoverridable[markdown-source-ext symbol?]
-@defoverridable[null-source-ext symbol?]
-@defoverridable[pagetree-source-ext symbol?]
-@defoverridable[template-source-ext symbol?]
-@defoverridable[scribble-source-ext symbol?]
-)]{File extensions for Pollen source files.}
-
 
 @defoverridable[main-pagetree string?]{Pagetree that Pollen dashboard loads by default in each directory.}
 
@@ -88,8 +87,6 @@ Determines the default HTTP port for the project server.}
 
 
 @defoverridable[command-char char?]{The magic character that indicates a Pollen command, function, or variable.}
-
-@defoverridable[template-prefix string?]{Prefix of the default template.}
 
 
 @deftogether[(
@@ -147,12 +144,6 @@ Both the names and the values of environment variables are case-insensitive, so 
 @history[#:added "1.1"]}
 
 
-@defoverridable[splicing-tag symbol?]{Key used to signal that an X-expression should be spliced into its containing X-expression.}
-
-
-@defoverridable[poly-source-ext symbol?]{Extension that indicates a source file can target multiple output types.}
-
-
 @defoverridable[poly-targets (listof symbol?)]{List of symbols that denotes the possible targets of a @racket['poly] source file.}
 
 
@@ -165,8 +156,6 @@ Both the names and the values of environment variables are case-insensitive, so 
   @defoverridable[allow-unbound-ids? boolean?]{Predicate that controls whether Pollen converts unbound identifiers into default tags by altering the behavior of @racket[#%top] in @racketmodname[pollen/top].
 
  @history[#:added "2.0"]}
-
-@defoverridable[here-path-key 'symbol]{Key used to store the path of the source file in its metas table. No idea why you'd want to change this.}
 
 
 @section{Parameters}

@@ -1,7 +1,7 @@
 #lang racket/base
 (require (for-syntax
           racket/base
-          "setup.rkt")
+          "private/constants.rkt")
          racket/match
          txexpr/base
          xml/path
@@ -21,7 +21,7 @@
 ;; even though this error will happen after macro expansion, when metas are extracted
 ;; empty string will merge with surroundings
 (provide define-meta)
-(define-syntax-rule (define-meta k v) (begin))
+(define-syntax-rule (define-meta k v kv ...) (begin))
 
 (define+provide current-metas (make-parameter #f))
 
@@ -120,7 +120,7 @@
 (define-syntax (when/splice stx)
   (syntax-case stx ()
     [(_ COND . BODY)
-     (with-syntax ([SPLICING-TAG (datum->syntax stx (setup:splicing-tag))])
+     (with-syntax ([SPLICING-TAG (datum->syntax stx pollen-splicing-tag)])
        #'(if COND
              (SPLICING-TAG . BODY) 
              (SPLICING-TAG)))]))
@@ -130,7 +130,7 @@
 (define-syntax (for/splice/base stx)
   (syntax-case stx ()
     [(_ ITERATORS . BODY)
-     (with-syntax ([SPLICING-TAG (datum->syntax stx (setup:splicing-tag))]
+     (with-syntax ([SPLICING-TAG (datum->syntax stx pollen-splicing-tag)]
                    [FORM (or (syntax-property stx 'form) #'for/list)])
        #'(apply SPLICING-TAG (FORM ITERATORS
                                    (SPLICING-TAG . BODY))))]))

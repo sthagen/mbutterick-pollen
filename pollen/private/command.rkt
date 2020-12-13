@@ -7,7 +7,8 @@
          sugar/coerce
          "file-utils.rkt"
          "log.rkt"
-         "../setup.rkt")
+         "../setup.rkt"
+         "../pagetree.rkt")
 
 ;; The use of dynamic-require throughout this file is intentional:
 ;; this way, low-dependency raco commands (like "version") are faster.
@@ -27,8 +28,7 @@
      (very-nice-path (car args)))))
 
 (define (dispatch command-name)
-  (with-logging-to-port
-      (current-error-port)
+  (define dispatch-thunk
     (λ ()
       (case command-name
         [("test" "xyzzy") (handle-test)]
@@ -40,13 +40,19 @@
         [("reset") (handle-reset (get-first-arg-or-current-dir))]
         [("setup") (handle-setup)]
         [("clone" "publish") (handle-publish)]
-        [else (handle-unknown command-name)]))
-    #:logger pollen-logger
-    'info
-    'pollen))
+        [else (handle-unknown command-name)])))
+  (cond
+    [(let ([str (getenv "PLTSTDERR")])
+       (and str (regexp-match "@pollen" str))) (dispatch-thunk)]
+    [else (with-logging-to-port
+           (current-error-port)
+           dispatch-thunk
+           #:logger pollen-logger
+           'info
+           'pollen)]))
 
 (define (very-nice-path x)
-  (path->complete-path (simplify-path (cleanse-path (->path x)))))
+  (simple-form-path (cleanse-path (->path x))))
 
 (define (handle-test)
   (displayln "raco pollen is installed correctly"))
@@ -76,18 +82,20 @@ version                print the version" (current-server-port) (make-publish-di
 (define (handle-setup)
   (message "preheating cache ...")
   (define setup-parallel? (make-parameter #false))
+  (define dry-run? (make-parameter #false))
   (define parsed-args
     (command-line #:program "raco pollen setup"
                   #:argv (vector-drop (current-command-line-arguments) 1) ; snip the 'setup' from the front
                   #:once-any
                   [("-p" "--parallel") "Setup in parallel using all cores" (setup-parallel? #true)]
                   [("-j" "--jobs") job-count "Setup in parallel using <job-count> jobs" (setup-parallel? (or (string->number job-count) (raise-argument-error 'handle-setup "exact positive integer" job-count)))]
+                  [("-d" "--dry-run") "Print paths that would be compiled" (dry-run? #true)]
                   #:args other-args
                   other-args))
   (define starting-dir (match parsed-args
                          [(list dir) dir]
                          [_  (current-directory)]))
-  ((dynamic-require 'pollen/private/preheat-cache 'preheat-cache) starting-dir (setup-parallel?)))
+  ((dynamic-require 'pollen/private/preheat-cache 'preheat-cache) starting-dir (setup-parallel?) (dry-run?)))
 
 (define (handle-render)
   (define render-batch (dynamic-require 'pollen/render 'render-batch))
@@ -96,6 +104,8 @@ version                print the version" (current-server-port) (make-publish-di
   (define render-target-wanted (make-parameter (current-poly-target)))
   (define render-with-subdirs? (make-parameter #f))
   (define render-parallel? (make-parameter #f))
+  (define special-output? (make-parameter #f))
+  (define force-render? (make-parameter #f))
   (define parsed-args
     (command-line #:program "raco pollen render"
                   #:argv (vector-drop (current-command-line-arguments) 1) ; snip the 'render' from the front
@@ -105,11 +115,30 @@ version                print the version" (current-server-port) (make-publish-di
                   [("-r" "--recursive") "Render subdirectories recursively"
                                         (render-with-subdirs? 'recursive)]
                   [("-s" "--subdir") "Render subdirectories nonrecursively" (render-with-subdirs? 'include)]
+                  [("-f" "--force") "Force render" (force-render? #true)]
+                  #:once-any
+                  [("-d" "--dry-run") "Print paths that would be rendered" (special-output? 'dry-run)]
+                  [("-n" "--null") "Suppress file output" (special-output? 'null)]
                   #:once-any
                   [("-p" "--parallel") "Render in parallel using all cores" (render-parallel? #true)]
                   [("-j" "--jobs") job-count "Render in parallel using <job-count> jobs" (render-parallel? (or (string->number job-count) (raise-argument-error 'handle-render "exact positive integer" job-count)))]
                   #:args other-args
-                  other-args)) 
+                  other-args))
+
+  (define timestamp (current-seconds)) ; keeps timestamp consistent through whole render
+  (define (handle-batch-render paths)
+    (when (force-render?)
+      ;; forcing works like `touch`: updates the mod date of the files,
+      ;; which invalidates any cached results.
+      (let force-paths ([paths paths])
+        (for* ([path (in-list paths)]
+               [sp (in-value (if (pagetree-source? path) path (get-source path)))]
+               #:when sp)
+              (file-or-directory-modify-seconds sp timestamp)
+              (when (pagetree-source? sp)
+                (force-paths (pagetree->paths sp))))))
+    (apply render-batch (map very-nice-path paths) #:parallel (render-parallel?) #:special (special-output?)))
+  
   (parameterize ([current-poly-target (render-target-wanted)]) ;; applies to both cases
     (let loop ([args parsed-args])
       (match args
@@ -124,49 +153,49 @@ version                print the version" (current-server-port) (make-publish-di
                                                     [(recursive) dir]
                                                     [else top-dir])])
                (define dirlist (directory-list dir))
-               (define preprocs (filter preproc-source? dirlist))
-               (define static-pagetrees (filter pagetree-source? dirlist))
-               ;; if there are no static pagetrees, use make-project-pagetree
-               ;; (which will synthesize a pagetree if needed, which includes all sources)
                (define paths-to-render
-                 (map very-nice-path
-                      (match static-pagetrees
-                        [(? null?)
-                         (message (format "rendering generated pagetree for directory ~a" dir))
-                         (cdr (make-project-pagetree dir))]
-                        [_
-                         (message (format "rendering preproc & pagetree files in directory ~a" dir))
-                         (append preprocs static-pagetrees)])))
-               (apply render-batch paths-to-render #:parallel (render-parallel?))
+                 (match (filter pagetree-source? dirlist)
+                   ;; if there are no static pagetrees, use make-project-pagetree
+                   ;; (which will synthesize a pagetree if needed, which includes all sources)
+                   [(? null?)
+                    (message (format "rendering generated pagetree for directory ~a" dir))
+                    (cdr (make-project-pagetree dir))]
+                   [pagetree-sources
+                    (message (format "rendering preproc & pagetree files in directory ~a" dir))
+                    (append (filter preproc-source? dirlist) pagetree-sources)]))
+               (handle-batch-render paths-to-render)
                (when (render-with-subdirs?)
                  (for ([path (in-list dirlist)]
                        #:when (directory-exists? path))
-                   (render-one-dir (->complete-path path)))))))]
+                      (render-one-dir (->complete-path path)))))))]
         [path-args ;; path mode
          (message (format "rendering ~a" (string-join (map ->string path-args) " ")))
-         (apply render-batch (map very-nice-path path-args) #:parallel (render-parallel?))]))))
+         (handle-batch-render path-args)]))))
 
 (define (handle-start)
   (define launch-wanted #f)
   (define localhost-wanted #f)
-  (define clargs
-    (command-line #:program "raco pollen start"
-                  #:argv (vector-drop (current-command-line-arguments) 1) ; snip the 'start' from the front
-                  #:once-each
-                  [("--launch" "-l") "Launch browser after start" (set! launch-wanted #t)]
-                  [("--local") "Restrict access to localhost" (set! localhost-wanted #t)]
-                  #:args other-args
-                  other-args))
-  (define dir (path->directory-path (get-first-arg-or-current-dir clargs)))
-  (unless (directory-exists? dir)
-    (error (format "~a is not a directory" dir)))
-  (define http-port (with-handlers ([exn:fail? (λ (e) #f)])
-                      (string->number (cadr clargs))))
-  (when (and http-port (not (exact-positive-integer? http-port)))
-    (error (format "~a is not a valid port number" http-port)))
+  (define-values (dir http-port)
+    (command-line
+     #:program "raco pollen start"
+     #:argv (vector-drop (current-command-line-arguments) 1) ; snip the 'start' from the front
+     #:once-each
+     [("--launch" "-l") "Launch browser after start" (set! launch-wanted #t)]
+     [("--local") "Restrict access to localhost" (set! localhost-wanted #t)]
+     #:args ([dir (current-directory)] [port #f])
+     (define parsed-dir
+       (path->directory-path (normalize-path (very-nice-path dir))))
+     (unless (directory-exists? parsed-dir)
+       (error (format "~a is not a directory" parsed-dir)))
+
+     (define parsed-port (and port (string->number port)))
+     (when (and parsed-port (not (exact-positive-integer? parsed-port)))
+       (error (format "~a is not a valid port number" parsed-port)))
+     (values parsed-dir parsed-port)))
   (parameterize ([current-project-root dir]
                  [current-server-port (or http-port (setup:project-server-port))]
-                 [current-server-listen-ip (and localhost-wanted "127.0.0.1")])
+                 [current-server-listen-ip (and localhost-wanted "127.0.0.1")]
+                 [current-session-interactive? #true])
     (message "starting project server ...")
     ((dynamic-require 'pollen/private/project-server 'start-server) (format "/~a" (setup:main-pagetree dir)) launch-wanted)))
 
@@ -193,19 +222,21 @@ version                print the version" (current-server-port) (make-publish-di
     (and (>= (length xs) (length prefix))
          (andmap equal? prefix (for/list ([(x idx) (in-indexed xs)]
                                           #:break (= idx (length prefix)))
-                                 x))))
+                                         x))))
   ((explode-path possible-subdir) . has-prefix? . (explode-path possible-superdir)))
 
 (define (handle-publish)
   (define command-name ; either "publish" or "clone"
     (vector-ref (current-command-line-arguments) 0))
   (define force-target-overwrite? (make-parameter #true))
+  (define dry-run? (make-parameter #false))
   (define other-args (command-line
                       ;; drop command name
                       #:argv (vector-drop (current-command-line-arguments) 1)
                       #:once-each
                       [("-c" "--confirm") "Confirm overwrite of existing dest dir"
                                           (force-target-overwrite? #f)]
+                      [("-d" "--dry-run") "Check paths that would be published" (dry-run? #true)]
                       #:args other-args
                       other-args))
   ;; other-args looks like (list [maybe-source-dir-arg] [maybe-dest-dir-arg])
@@ -228,7 +259,6 @@ version                print the version" (current-server-port) (make-publish-di
   (when (equal? dest-dir (current-directory))
     (error 'publish "aborted because destination directory for publishing (~a) can't be the same as current directory (~a)" dest-dir (current-directory)))
   
-  (message (string-append (format "publishing from ~a to ~a ..." source-dir dest-dir)))
   (define do-publish-operation?
     (or (not (directory-exists? dest-dir))
         (force-target-overwrite?)
@@ -238,20 +268,35 @@ version                print the version" (current-server-port) (make-publish-di
             [(y yes) #true]
             [else #false]))))
   (cond
-    [do-publish-operation?
-     (when (directory-exists? dest-dir)
-       (delete-directory/files dest-dir))
-     (copy-directory/files source-dir dest-dir)
-     ;; if source-dir is provided, we want it to be treated as current-directory.
-     ;; if no source-dir is provided, it is set to current-directory,
-     ;; so the parameterize is a no-op.
-     (parameterize* ([current-directory source-dir]
-                     [current-project-root (current-directory)])
-       (define (delete-from-publish-dir? p)
-         (and (omitted-path? p) (not (extra-path? p))))
-       (for-each delete-it! (find-files delete-from-publish-dir? dest-dir)))
-     (message "publish completed")]
-    [else (message "publish aborted")]))
+    [(dry-run?)
+     (message "publish: start dry run")
+     (message (format "would publish from ~a to ~a" source-dir dest-dir))
+     (cond
+       [(directory-exists? dest-dir)
+        (message (string-append (format "directory ~a exists (but can be overwritten)" dest-dir)))]
+       [(directory-exists? (simplify-path (build-path dest-dir "..")))
+        (message (string-append (format "directory ~a does not exist (but can be created)" dest-dir)))]
+       [else
+        (raise-user-error 'publish "dry run failure: directory path ~a is defective (neither directory nor parent directory exists)" dest-dir)])
+     (message "publish: end dry run")]
+    [else
+     (message (string-append (format "publishing from ~a to ~a ..." source-dir dest-dir)))
+     (cond
+       [do-publish-operation?
+        (when (directory-exists? dest-dir)
+          (with-handlers ([exn:fail:filesystem? (λ (exn) (raise-user-error 'publish (format "operation failed: could not delete ~a" dest-dir)))])
+            (delete-directory/files dest-dir)))
+        (copy-directory/files source-dir dest-dir)
+        ;; if source-dir is provided, we want it to be treated as current-directory.
+        ;; if no source-dir is provided, it is set to current-directory,
+        ;; so the parameterize is a no-op.
+        (parameterize* ([current-directory source-dir]
+                        [current-project-root (current-directory)])
+          (define (delete-from-publish-dir? p)
+            (and (omitted-path? p) (not (extra-path? p))))
+          (for-each delete-it! (find-files delete-from-publish-dir? dest-dir)))
+        (message "publish completed")]
+       [else (message "publish aborted")])]))
 
 (define (handle-unknown command)
   (match command
