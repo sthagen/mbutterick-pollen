@@ -19,7 +19,8 @@
   (let-values ([(dir name dir?) (split-path path)])
     dir))
 
-(define (get-path-to-override maybe-dir)
+(provide find-nearest-default-directory-require)
+(define (find-nearest-default-directory-require maybe-dir)
   (define starting-dir (cond
                          [(not maybe-dir) (current-directory)]
                          [(directory-exists? maybe-dir) maybe-dir]
@@ -50,8 +51,13 @@
              ;; exn:fail:contract? is raised if setup submodule doesn't exist
              ;; in which case we use the default value.
              ;; but if something else is amiss, we want to let it bubble up
-             (define setup-module-path (get-path-to-override dir))
+             (define setup-module-path (find-nearest-default-directory-require dir))
              (with-handlers ([exn:fail:contract? (λ (exn) DEFAULT-NAME)]
+                             ;; certain errors in pollen.rkt will arrive here
+                             ;; they do not indicate a defective setup module, so pass them through
+                             [exn:fail:read? raise] ; syntactic failure (e.g., missing paren)
+                             [exn:fail:syntax? raise] ; semantic failure (e.g., unbound identifier)
+                             [exn:fail:filesystem? raise] ; filesystem failure (e.g., too many open files)
                              [exn? (λ (exn) (raise-user-error 'pollen/setup
                                                               (format "defective `setup` submodule in ~v\n~a" (path->string setup-module-path) (exn-message exn))))])
                (dynamic-require `(submod ,setup-module-path WORLD-SUBMOD)
@@ -128,3 +134,5 @@
 (define-settable index-pages '("index.html"))
 
 (define-settable allow-unbound-ids? #true)
+
+(define-settable external-renderer #false)

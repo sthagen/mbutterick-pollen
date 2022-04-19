@@ -102,7 +102,9 @@ Paths can also be specified as output rather than input paths, and the correspon
 > raco pollen render foo.html
 > raco pollen render foo.html bar.html zam.css}
 
-The optional @exec{--target} or @exec{-t} switch specifies the render target for multi-output source files. If the target is omitted, the renderer will use whatever target appears first in @racket[(setup:poly-targets)].
+If a pagetree file is included in @racket[_source], all the files it lists will be rendered using the above rules.
+
+The optional @exec{--target} or @exec{-t} switch specifies the render target to use for multi-output source files. (Files of other types encountered in @racket[_source] will still be rendered as usual.) If the target is omitted, the renderer will use whatever target appears first in @racket[(setup:poly-targets)].
 
 @terminal{
 > raco pollen render -t pdf foo.poly.pm}
@@ -130,9 +132,7 @@ As a rule of thumb, parallel rendering works best if you do @exec{raco setup} fi
 
 @italic{Warning}: In all cases, the newly rendered output file will overwrite any previous output file.
 
-@margin-note{As of mid-2020, Pollen's parallel-processing performance under the CS (= Chez Scheme) variant of Racket is worse than ordinary Racket. If you use Racket CS, you may get better results using @exec{-j 4} (which will limit the operation to four cores) than @exec{-p} (which will use all available cores).}
-
-@bold{Directory mode}: @racket[raco pollen render _directory] renders all preprocessor source files and then all pagetree files found in the specified directory. If none of these files are found, a pagetree will be generated for the directory (which will include all source files) and then rendered. If the @racket[_directory] argument is omitted, the command defaults to the current directory.
+@bold{Directory mode}: @racket[raco pollen render _directory] renders all preprocessor source files and then all pagetree files found in the specified directory. If none of these files are found, a pagetree will be generated for the directory (which will include all source files, but also everything else that exists there; see @secref["The_automatic_pagetree"]) and then rendered. If the @racket[_directory] argument is omitted, the command defaults to the current directory.
 
 In directory mode, this command can be invoked with two other optional arguments (in addition to the @exec{--target}, @exec{--parallel}, and  @exec{--jobs} switches mentioned above):
 
